@@ -1,11 +1,16 @@
-import { Schema, ArraySchema, type } from "@colyseus/schema";
+import { Schema, ArraySchema, type, MapSchema } from "@colyseus/schema";
 
 // タイル1枚の定義
 export class Tile extends Schema {
-    @type("number") x: number = 0; // 六角形グリッドのX座標 (q)
-    @type("number") y: number = 0; // 六角形グリッドのY座標 (r)
-    @type("number") resourceType: number = 0; // 0:砂漠, 1:木, 2:レンガ...
-    @type("number") numberToken: number = 0;  // 2〜12の数字
+  @type("number") x: number = 0; // 六角形グリッドのX座標 (q)
+  @type("number") y: number = 0; // 六角形グリッドのY座標 (r)
+  @type("number") resourceType: number = 0; // 0:砂漠, 1:木, 2:レンガ...
+  @type("number") numberToken: number = 0;  // 2〜12の数字
+}
+
+export class Structure extends Schema {
+  @type("number") ownerIndex: number = -1; // 所有プレイヤーID (0~3)
+  @type("number") type: number = 0; // 1:道, 2:開拓地, 3:都市
 }
 
 export class MyRoomState extends Schema {
@@ -15,5 +20,9 @@ export class MyRoomState extends Schema {
   @type("number") dice1: number = 1;
   @type("number") dice2: number = 1;
   @type([Tile]) tiles = new ArraySchema<Tile>();
+
+  // キーは座標ID (例: "x_y")
+  @type({ map: Structure }) settlements = new MapSchema<Structure>();
+  @type({ map: Structure }) roads = new MapSchema<Structure>();
 
 }
