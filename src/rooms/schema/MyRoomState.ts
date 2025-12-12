@@ -40,5 +40,7 @@ export class MyRoomState extends Schema {
 
   // プレイヤー人数（とりあえず 4 で固定でも可）
   @type("number") playerCount: number = 4;
+  // 0: サイコロ前, 1: サイコロ後
+  @type("number") turnStep: number = 0;
 
 }

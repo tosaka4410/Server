@@ -20,6 +20,22 @@ export class MyRoom extends Room<MyRoomState> {
 
     // サイコロを振るリクエストを処理
     this.onMessage("rollDice", (client, message) => {
+      const playerIndex = this.players.indexOf(client);
+      if (playerIndex === -1) return;
+
+      if (this.state.phase !== 2) {
+        console.log("rollDice ignored: not in main phase.");
+        return;
+      }
+      if (playerIndex !== this.state.currentPlayerIndex) {
+        console.log("rollDice ignored: not your turn.");
+        return;
+      }
+      if (this.state.turnStep !== 0) {
+        console.log("rollDice ignored: already rolled.");
+        return;
+      }
+
       // 1〜6の乱数を生成
       const d1 = Math.floor(Math.random() * 6) + 1;
       const d2 = Math.floor(Math.random() * 6) + 1;
@@ -28,7 +44,37 @@ export class MyRoom extends Room<MyRoomState> {
       this.state.dice1 = d1;
       this.state.dice2 = d2;
 
+      this.state.turnStep = 1;
+
       console.log(`Player ${client.sessionId} rolled ${d1} + ${d2}`);
+    });
+
+    this.onMessage("endTurn", (client, message) => {
+      const playerIndex = this.players.indexOf(client);
+      if (playerIndex === -1) return;
+
+      // 本番フェーズのみ
+      if (this.state.phase !== 2) {
+        console.log("endTurn ignored: not in main phase.");
+        return;
+      }
+      // 自分の番のみ
+      if (playerIndex !== this.state.currentPlayerIndex) {
+        console.log("endTurn ignored: not your turn.");
+        return;
+      }
+      // サイコロを振っていないなら終了させない（任意）
+      if (this.state.turnStep === 0) {
+        console.log("endTurn ignored: dice not rolled yet.");
+        return;
+      }
+
+      // 次のプレイヤーへ
+      const n = this.state.playerCount;
+      this.state.currentPlayerIndex = (this.state.currentPlayerIndex + 1) % n;
+      this.state.turnStep = 0; // 次のプレイヤーはサイコロ前
+
+      console.log(`Turn ended. Next player: ${this.state.currentPlayerIndex}`);
     });
 
     // 建物や道の建設リクエストを処理
@@ -46,6 +92,10 @@ export class MyRoom extends Room<MyRoomState> {
       }
 
       // ★ ここからは本番フェーズのみ通る
+      if (this.state.phase === 2 && playerIndex !== this.state.currentPlayerIndex) {
+        console.log(`build ignored: not player ${playerIndex}'s turn`);
+        return;
+      }
 
       const structure = new Structure();
       structure.ownerIndex = playerIndex;
@@ -198,6 +248,7 @@ export class MyRoom extends Room<MyRoomState> {
         // 初期配置終了 → 本番フェーズへ
         this.state.phase = 2; // MainGame
         this.state.currentPlayerIndex = 0; // 本番の先攻プレイヤー（とりあえず0番に）
+        this.state.turnStep = 0;           // サイコロ前
         console.log("Initial placement finished. Entering main game.");
       } else {
         // まだ初期配置中 → 次のプレイヤーへ
