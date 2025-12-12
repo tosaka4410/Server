@@ -25,4 +25,20 @@ export class MyRoomState extends Schema {
   @type({ map: Structure }) settlements = new MapSchema<Structure>();
   @type({ map: Structure }) roads = new MapSchema<Structure>();
 
+  // 0: 初期配置1巡目, 1: 初期配置2巡目, 2: 本番
+  @type("number") phase: number = 0;
+
+  // 「今誰のターンか」をクライアントにも知らせる
+  @type("number") currentPlayerIndex: number = 0;
+
+  // 0〜(playerCount*2 - 1) のカウンタ
+  @type("number") initialPlacementTurn: number = 0;
+
+  // 今の手番で「開拓地」か「道」か
+  // 0: 開拓地, 1: 道
+  @type("number") initialPlacementStep: number = 0;
+
+  // プレイヤー人数（とりあえず 4 で固定でも可）
+  @type("number") playerCount: number = 4;
+
 }
