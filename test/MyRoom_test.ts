@@ -23,10 +23,18 @@ describe("testing your Colyseus app", () => {
     // make your assertions
     assert.strictEqual(client1.sessionId, room.clients[0].sessionId);
 
-    // wait for state sync
-    await room.waitForNextPatch();
+    // wait for state sync (wait until tiles are populated)
+    const waitFor = async (pred: () => boolean, timeout = 2000) => {
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        if (pred()) return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error("timeout waiting for state");
+    };
 
-    // Verify the synchronized property exists and has the expected value
-    assert.strictEqual(client1.state.mySynchronizedProperty, "Hello world");
+    await waitFor(() => (client1.state as any).tiles && (client1.state as any).tiles.length > 0);
+    // Verify board was generated
+    assert.strictEqual((client1.state as any).tiles.length, 19);
   });
 });

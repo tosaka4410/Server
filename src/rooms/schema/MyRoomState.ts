@@ -1,46 +1,56 @@
 import { Schema, ArraySchema, type, MapSchema } from "@colyseus/schema";
 
-// タイル1枚の定義
 export class Tile extends Schema {
-  @type("number") x: number = 0; // 六角形グリッドのX座標 (q)
-  @type("number") y: number = 0; // 六角形グリッドのY座標 (r)
-  @type("number") resourceType: number = 0; // 0:砂漠, 1:木, 2:レンガ...
-  @type("number") numberToken: number = 0;  // 2〜12の数字
+  @type("number") id: number = 0;
+
+  @type("number") q: number = 0;  // axial
+  @type("number") r: number = 0;
+
+  @type("number") x: number = 0;  // world
+  @type("number") y: number = 0;
+
+  @type("number") resourceType: number = 0; // 0:Desert, 1.. (あなたの定義でOK)
+  @type("number") numberToken: number = 0;
+}
+
+export class Vertex extends Schema {
+  @type("number") id: number = 0;
+  @type("number") x: number = 0;
+  @type("number") y: number = 0;
+}
+
+export class Edge extends Schema {
+  @type("number") id: number = 0;
+  @type("number") a: number = 0; // vertexId
+  @type("number") b: number = 0; // vertexId
+
+  // 表示用に中心座標も持たせる（UnityでedgeSpotの位置に使う）
+  @type("number") x: number = 0;
+  @type("number") y: number = 0;
 }
 
 export class Structure extends Schema {
-  @type("number") ownerIndex: number = -1; // 所有プレイヤーID (0~3)
-  @type("number") type: number = 0; // 1:道, 2:開拓地, 3:都市
+  @type("number") ownerIndex: number = -1;
+  @type("number") type: number = 0; // 1:Road 2:Settlement 3:City
 }
 
 export class MyRoomState extends Schema {
+  @type([Tile]) tiles = new ArraySchema<Tile>();
+  @type([Vertex]) vertices = new ArraySchema<Vertex>();
+  @type([Edge]) edges = new ArraySchema<Edge>();
 
-  @type("string") mySynchronizedProperty: string = "Hello world";
+  // 建設結果は「頂点ID」「辺ID」をキーにする
+  @type({ map: Structure }) settlements = new MapSchema<Structure>(); // key = vertexId string
+  @type({ map: Structure }) roads = new MapSchema<Structure>();       // key = edgeId string
 
   @type("number") dice1: number = 1;
   @type("number") dice2: number = 1;
-  @type([Tile]) tiles = new ArraySchema<Tile>();
 
-  // キーは座標ID (例: "x_y")
-  @type({ map: Structure }) settlements = new MapSchema<Structure>();
-  @type({ map: Structure }) roads = new MapSchema<Structure>();
-
-  // 0: 初期配置1巡目, 1: 初期配置2巡目, 2: 本番
-  @type("number") phase: number = 0;
-
-  // 「今誰のターンか」をクライアントにも知らせる
+  // フェーズ・手番
+  @type("number") phase: number = 0;              // 0/1/2
   @type("number") currentPlayerIndex: number = 0;
-
-  // 0〜(playerCount*2 - 1) のカウンタ
   @type("number") initialPlacementTurn: number = 0;
-
-  // 今の手番で「開拓地」か「道」か
-  // 0: 開拓地, 1: 道
   @type("number") initialPlacementStep: number = 0;
-
-  // プレイヤー人数（とりあえず 4 で固定でも可）
   @type("number") playerCount: number = 4;
-  // 0: サイコロ前, 1: サイコロ後
-  @type("number") turnStep: number = 0;
-
+  @type("number") turnStep: number = 0;           // 本番：0サイコロ前/1後
 }
