@@ -34,6 +34,11 @@ export class Structure extends Schema {
   @type("number") type: number = 0; // 1:Road 2:Settlement 3:City
 }
 
+export class PlayerState extends Schema {
+  // resource[0..4] = wood, brick, sheep, wheat, ore
+  @type(["number"]) resources = new ArraySchema<number>(0, 0, 0, 0, 0);
+}
+
 export class MyRoomState extends Schema {
   @type([Tile]) tiles = new ArraySchema<Tile>();
   @type([Vertex]) vertices = new ArraySchema<Vertex>();
@@ -53,4 +58,13 @@ export class MyRoomState extends Schema {
   @type("number") initialPlacementStep: number = 0;
   @type("number") playerCount: number = 4;
   @type("number") turnStep: number = 0;           // 本番：0サイコロ前/1後
+
+  // プレイヤー状態配列
+  @type([PlayerState]) players = new ArraySchema<PlayerState>();
+
+  @type("number") bankWood: number = 19;
+  @type("number") bankBrick: number = 19;
+  @type("number") bankSheep: number = 19;
+  @type("number") bankWheat: number = 19;
+  @type("number") bankOre: number = 19;
 }

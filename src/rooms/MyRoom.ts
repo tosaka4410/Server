@@ -1,5 +1,5 @@
 import { Room, Client } from "@colyseus/core";
-import { MyRoomState, Tile, Vertex, Edge, Structure } from "./schema/MyRoomState";
+import { MyRoomState, Tile, Vertex, Edge, Structure, PlayerState } from "./schema/MyRoomState";
 
 
 type VKey = string;           // "x_y" (quantized int)
@@ -21,9 +21,23 @@ export class MyRoom extends Room<MyRoomState> {
 
   private pendingInitialSettlementByPlayer = new Map<number, number>(); // player -> vertexId
 
+  private vertexIdToTileIds = new Map<number, number[]>();
+  private tileIdToVertexIds = new Map<number, number[]>();
+
+
+  private linkVertexTile(tileId: number, vId: number) {
+    if (!this.vertexIdToTileIds.has(vId)) this.vertexIdToTileIds.set(vId, []);
+    const arr = this.vertexIdToTileIds.get(vId)!;
+    if (!arr.includes(tileId)) arr.push(tileId);
+  }
+
+
+
   // Unityローカルに合わせる
   private hexSize = 1.0;
   private quantizeFactor = 100; // ローカルの Quantize と同じ
+
+  private readonly ENABLE_CHEAT = true; // 本番では false
 
 
   onCreate(options: any) {
@@ -39,19 +53,23 @@ export class MyRoom extends Room<MyRoomState> {
 
   }
 
-    // Lifecycle methods
-  onJoin(client: Client, options: any) {
+  // Lifecycle methods
+  onJoin(client: Client) {
     this.players.push(client);
-    const index = this.players.length - 1;
-    console.log(client.sessionId, "joined as Player", this.players.length - 1);
-    this.state.playerCount = this.players.length;
-    client.send("playerIndex", { index });
+    const idx = this.players.length - 1;
 
-    // 全員揃ったら初期配置開始（前回のロジック）
+    // PlayerState を追加
+    const ps = new PlayerState();
+    this.state.players.push(ps);
+
+    this.state.playerCount = this.players.length;
+    client.send("playerIndex", { index: idx });
+
     if (this.players.length === this.maxClients) {
       this.startInitialPlacement();
     }
   }
+
 
   onLeave(client: Client, consented: boolean) {
     const idx = this.players.indexOf(client);
@@ -103,13 +121,13 @@ export class MyRoom extends Room<MyRoomState> {
 
     // 2) 資源・数字（あなたの既存と同じでOK）
     const resources = [
-      1,1,1,1, // wood
-      2,2,2,   // brick
-      3,3,3,3, // sheep
-      4,4,4,4, // wheat
-      5,5,5    // ore
+      1, 1, 1, 1, // wood
+      2, 2, 2,   // brick
+      3, 3, 3, 3, // sheep
+      4, 4, 4, 4, // wheat
+      5, 5, 5    // ore
     ];
-    const numbers = [2,3,3,4,4,5,5,6,6,8,8,9,9,10,10,11,11,12];
+    const numbers = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
     this.shuffle(resources);
     this.shuffle(numbers);
 
@@ -149,6 +167,8 @@ export class MyRoom extends Room<MyRoomState> {
 
       // 4) このタイル周りの6頂点を作る（重複排除）
       const tileVertexIds: number[] = [];
+
+
       for (let k = 0; k < 6; k++) {
         const cx = p.x + this.cornerOffsets[k].x * this.hexSize;
         const cy = p.y + this.cornerOffsets[k].y * this.hexSize;
@@ -168,6 +188,11 @@ export class MyRoom extends Room<MyRoomState> {
           this.vertexIdToEdges.set(vId, new Set());
         }
         tileVertexIds.push(vId);
+      }
+
+      this.tileIdToVertexIds.set(t.id, tileVertexIds);
+      for (const vId of tileVertexIds) {
+        this.linkVertexTile(t.id, vId);
       }
 
       // 5) 6辺（0-1,1-2,...,5-0）を生成（重複排除）
@@ -218,7 +243,7 @@ export class MyRoom extends Room<MyRoomState> {
     }
   }
 
-    // ===== 初期配置開始 =====
+  // ===== 初期配置開始 =====
   private startInitialPlacement() {
     this.state.phase = 0;
     this.state.initialPlacementTurn = 0;
@@ -234,14 +259,117 @@ export class MyRoom extends Room<MyRoomState> {
     return (n * 2 - 1) - turn;
   }
 
-
   private sendBuildError(client: Client, reason: string) {
     client.send("buildError", { reason });
   }
 
+  // ===== 資源分配ロジック =====
+  // tile.resourceType: 0 desert, 1 wood, 2 brick, 3 sheep, 4 wheat, 5 ore
+  private resourceIndexFromTileResourceType(rt: number): number | null {
+    switch (rt) {
+      case 1: return 0; // wood
+      case 2: return 1; // brick
+      case 3: return 2; // sheep
+      case 4: return 3; // wheat
+      case 5: return 4; // ore
+      default: return null; // desert/unknown
+    }
+  }
+
+  private addResourceToPlayer(playerIndex: number, resIdx: number, amount: number) {
+    const p = this.state.players[playerIndex];
+    if (!p) return;
+
+    // ArraySchema の要素更新
+    p.resources[resIdx] = (p.resources[resIdx] ?? 0) + amount;
+  }
+
+  private distributeResourcesByDice(sum: number) {
+    if (sum === 7) return;
+
+    for (let i = 0; i < this.state.tiles.length; i++) {
+      const tile = this.state.tiles[i];
+      if (tile.numberToken !== sum) continue;
+
+      const resIdx = this.resourceIndexFromTileResourceType(tile.resourceType);
+      if (resIdx == null) continue;
+
+      const vIds = this.tileIdToVertexIds.get(tile.id) ?? [];
+      for (const vId of vIds) {
+        const s = this.state.settlements.get(String(vId));
+        if (!s) continue;
+
+        const owner = s.ownerIndex;
+        const buildingType = s.type; // 2 settlement, 3 city
+        const amount = (buildingType === 3) ? 2 : 1;
+
+        this.addResourceToPlayer(owner, resIdx, amount);
+      }
+    }
+  }
+
+  private grantInitialResourcesForSecondSettlement(playerIndex: number, vertexId: number) {
+    const tileIds = this.vertexIdToTileIds.get(vertexId) ?? [];
+    for (const tileId of tileIds) {
+      const tile = this.state.tiles[tileId];
+      const resIdx = this.resourceIndexFromTileResourceType(tile.resourceType);
+      if (resIdx == null) continue; // desert
+      this.addResourceToPlayer(playerIndex, resIdx, 1);
+      console.log(`Granted initial resource to P${playerIndex}: resourceType=${tile.resourceType} from Tile${tileId}`);
+    }
+  }
+
+  // ===== 建設ロジック =====
+  private canPay(playerIndex: number, cost: number[]): boolean {
+    const p = this.state.players[playerIndex];
+    for (let i = 0; i < 5; i++) {
+      if ((p.resources[i] ?? 0) < cost[i]) return false;
+    }
+    return true;
+  }
+
+  private pay(playerIndex: number, cost: number[]) {
+    const p = this.state.players[playerIndex];
+    for (let i = 0; i < 5; i++) {
+      p.resources[i] = (p.resources[i] ?? 0) - cost[i];
+    }
+  }
+
+  private canUpgradeToCity(playerIndex: number, vId: number): { ok: boolean; reason?: string } {
+    const key = String(vId);
+    const s = this.state.settlements.get(key);
+    if (!s) return { ok: false, reason: "そこに開拓地がありません" };
+    if (s.ownerIndex !== playerIndex) return { ok: false, reason: "自分の開拓地ではありません" };
+    if (s.type === 3) return { ok: false, reason: "既に都市です" };
+    return { ok: true };
+  }
+
+
+  // [wood, brick, sheep, wheat, ore]
+  private COST_ROAD = [1, 1, 0, 0, 0];
+  private COST_SETTLEMENT = [1, 1, 1, 1, 0];
+  private COST_CITY = [0, 0, 0, 2, 3];
+
+
+  private forceEnterMainPhase(startPlayerIndex = 0) {
+    // 初期配置中の一時情報をクリア
+    this.pendingInitialSettlementByPlayer.clear();
+
+    // フェーズを本番へ
+    this.state.phase = 2;
+    this.state.turnStep = 0; // サイコロ前
+    this.state.currentPlayerIndex = Math.max(0, Math.min(startPlayerIndex, this.state.playerCount - 1));
+
+    // 初期配置用の値も整えておく（デバッグ上の混乱を防ぐ）
+    this.state.initialPlacementTurn = this.state.playerCount * 2;
+    this.state.initialPlacementStep = 0;
+
+    console.log(`[CHEAT] Force enter Main Phase. currentPlayerIndex=${this.state.currentPlayerIndex}`);
+  }
 
 
 
+  // ===== メッセージハンドラ登録 =====
   private registerHandlers() {
     this.onMessage("build", (client, data) => {
       const playerIndex = this.players.indexOf(client);
@@ -257,6 +385,7 @@ export class MyRoom extends Room<MyRoomState> {
         if (this.state.initialPlacementStep === 1 && data.structureType !== "road") { this.sendBuildError(client, "Invalid structure for initial placement."); return; }
       } else {
         if (playerIndex !== this.state.currentPlayerIndex) { this.sendBuildError(client, "Not your turn."); return; }
+        if (this.state.turnStep !== 1) { this.sendBuildError(client, "You must roll dice before building."); return; }
       }
 
       if (data.structureType === "settlement") {
@@ -290,6 +419,16 @@ export class MyRoom extends Room<MyRoomState> {
           if (!ok) { this.sendBuildError(client, "Must connect to one of your roads."); return; }
         }
 
+        // コストルールと支払い
+        if (!isInitial) {
+          if (!this.canPay(playerIndex, this.COST_SETTLEMENT)) {
+            client.send("buildError", { reason: "資源が足りません（開拓地）" });
+            return;
+          }
+          this.pay(playerIndex, this.COST_SETTLEMENT);
+        }
+
+
         const s = new Structure();
         s.ownerIndex = playerIndex;
         s.type = 2;
@@ -299,8 +438,67 @@ export class MyRoom extends Room<MyRoomState> {
           this.pendingInitialSettlementByPlayer.set(playerIndex, vId);
           this.state.initialPlacementStep = 1;
         }
+        if (isInitial && this.state.phase === 1) {
+          console.log(`P${playerIndex} placed second initial settlement at V${vId}`);
+          this.grantInitialResourcesForSecondSettlement(playerIndex, vId);
+        }
+
         return;
       }
+      if (data.structureType === "city") {
+        const vId = Number(data.id);
+        if (!Number.isInteger(vId) || vId < 0 || vId >= this.state.vertices.length) {
+          client.send("buildError", { reason: "無効な頂点IDです" });
+          return;
+        }
+
+        const isInitial = (this.state.phase === 0 || this.state.phase === 1);
+
+        // 都市は本番のみ（初期配置では不可）
+        if (isInitial) {
+          client.send("buildError", { reason: "初期配置中は都市にできません" });
+          return;
+        }
+
+        // 手番・サイコロ後チェック（あなたの運用に合わせて）
+        if (playerIndex !== this.state.currentPlayerIndex) {
+          client.send("buildError", { reason: "手番ではありません" });
+          return;
+        }
+        if (this.state.turnStep !== 1) {
+          client.send("buildError", { reason: "先にサイコロを振ってください" });
+          return;
+        }
+
+        // ルールチェック
+        const r = this.canUpgradeToCity(playerIndex, vId);
+        if (!r.ok) {
+          client.send("buildError", { reason: r.reason! });
+          return;
+        }
+
+        // コストチェック＆支払い
+        if (!this.canPay(playerIndex, this.COST_CITY)) {
+          client.send("buildError", { reason: "資源が足りません（都市）" });
+          return;
+        }
+        this.pay(playerIndex, this.COST_CITY);
+
+        // 開拓地→都市（MapSchemaの同キーを更新）
+        const key = String(vId);
+        const old = this.state.settlements.get(key)!;
+        const upgraded = new Structure();
+        upgraded.ownerIndex = old.ownerIndex;
+        upgraded.type = 3;
+        this.state.settlements.set(key, upgraded);
+
+        // MapSchemaは Value の中身を書き換えるだけでも同期されます（SDK差があるなら set し直す）
+        // this.state.settlements.set(key, s);
+
+        console.log(`P${playerIndex} upgraded settlement to city at V${vId}`);
+        return;
+      }
+
 
       if (data.structureType === "road") {
         const eId = Number(data.id);
@@ -312,7 +510,9 @@ export class MyRoom extends Room<MyRoomState> {
         if (!endpoints) { this.sendBuildError(client, "Edge endpoints not found."); return; }
         const { a, b } = endpoints;
 
+        // 接続ルール
         if (isInitial) {
+          // 初期配置：直前の開拓地に接続必須
           const pending = this.pendingInitialSettlementByPlayer.get(playerIndex);
           if (pending == null) { this.sendBuildError(client, "No pending initial settlement found."); return; }
           if (pending !== a && pending !== b) { this.sendBuildError(client, "Road must connect to your last initial settlement."); return; } // 直前の開拓地に接続必須
@@ -334,10 +534,20 @@ export class MyRoom extends Room<MyRoomState> {
           if (!(aMineBuilding || bMineBuilding || hasMyRoadAt(a) || hasMyRoadAt(b))) { this.sendBuildError(client, "Road must connect to your road or building."); return; }
         }
 
+        // コストルールと支払い
+        if (!isInitial) {
+          if (!this.canPay(playerIndex, this.COST_ROAD)) {
+            client.send("buildError", { reason: "資源が足りません（道）" });
+            return;
+          }
+          this.pay(playerIndex, this.COST_ROAD);
+        }
+
         const r = new Structure();
         r.ownerIndex = playerIndex;
         r.type = 1;
         this.state.roads.set(String(eId), r);
+
 
         if (isInitial) {
           this.pendingInitialSettlementByPlayer.delete(playerIndex);
@@ -345,12 +555,19 @@ export class MyRoom extends Room<MyRoomState> {
           // 初期配置ターン進行（家→道完了）
           this.state.initialPlacementTurn++;
           const totalTurns = this.state.playerCount * 2;
+
           if (this.state.initialPlacementTurn >= totalTurns) {
             this.state.phase = 2;
             this.state.currentPlayerIndex = 0;
             this.state.turnStep = 0;
           } else {
+            // 1巡目(phase=0) / 2巡目(phase=1) の切り替え
+            this.state.phase = (this.state.initialPlacementTurn >= this.state.playerCount) ? 1 : 0;
+
+            // 次の人の「開拓地」から
             this.state.initialPlacementStep = 0;
+
+            // 次の手番プレイヤーを更新（蛇行順）
             this.state.currentPlayerIndex = this.getCurrentInitialPlacementPlayer();
           }
         }
@@ -383,6 +600,9 @@ export class MyRoom extends Room<MyRoomState> {
       this.state.dice1 = d1;
       this.state.dice2 = d2;
 
+      const sum = d1 + d2;
+      this.distributeResourcesByDice(sum);
+
       this.state.turnStep = 1;
 
       console.log(`Player ${client.sessionId} rolled ${d1} + ${d2}`);
@@ -414,6 +634,58 @@ export class MyRoom extends Room<MyRoomState> {
       this.state.turnStep = 0; // 次のプレイヤーはサイコロ前
 
       console.log(`Turn ended. Next player: ${this.state.currentPlayerIndex}`);
+    });
+    this.onMessage("cheatAddResource", (client, data) => {
+      if (!this.ENABLE_CHEAT) return;
+
+      const senderIndex = this.players.indexOf(client);
+      if (senderIndex === -1) return;
+
+      // 🔒 セーフティ：ホスト(P0)のみ許可（外したければ消してOK）
+      if (senderIndex !== 0) {
+        client.send("buildError", { reason: "チートはホストのみ使用できます" });
+        return;
+      }
+
+      const targetPlayer = Number(data.playerIndex);
+      const resourceIndex = Number(data.resourceIndex);
+      const amount = Number(data.amount);
+
+      if (
+        !Number.isInteger(targetPlayer) ||
+        !Number.isInteger(resourceIndex) ||
+        !Number.isInteger(amount)
+      ) return;
+
+      if (targetPlayer < 0 || targetPlayer >= this.state.players.length) return;
+      if (resourceIndex < 0 || resourceIndex > 4) return;
+
+      const p = this.state.players[targetPlayer];
+      p.resources[resourceIndex] = (p.resources[resourceIndex] ?? 0) + amount;
+
+      console.log(
+        `[CHEAT] Give P${targetPlayer} +${amount} resource(${resourceIndex})`
+      );
+    });
+
+    this.onMessage("cheatForceMainPhase", (client, data) => {
+      if (!this.ENABLE_CHEAT) return;
+
+      const senderIndex = this.players.indexOf(client);
+      if (senderIndex === -1) return;
+
+      // 🔒 ホスト(P0)だけ許可（外したければ消してOK）
+      if (senderIndex !== 0) {
+        client.send("buildError", { reason: "チートはホストのみ使用できます" });
+        return;
+      }
+
+      const startPlayerIndex =
+        data && Number.isInteger(Number(data.startPlayerIndex))
+          ? Number(data.startPlayerIndex)
+          : 0;
+
+      this.forceEnterMainPhase(startPlayerIndex);
     });
   }
 
