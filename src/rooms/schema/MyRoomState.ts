@@ -67,4 +67,9 @@ export class MyRoomState extends Schema {
   @type("number") bankSheep: number = 19;
   @type("number") bankWheat: number = 19;
   @type("number") bankOre: number = 19;
+
+  // 盗賊関連
+  @type("number") robberTileId: number = 9;          // 盗賊がいるタイル（初期は砂漠など）
+  @type("number") robberStep: number = 0;            // 0:なし 1:捨て札中 2:移動待ち 3:奪う待ち
+  @type("number") robberMoverIndex: number = -1;     // 盗賊を動かすプレイヤー（基本は手番）
 }

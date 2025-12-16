@@ -350,7 +350,99 @@ export class MyRoom extends Room<MyRoomState> {
   private COST_SETTLEMENT = [1, 1, 1, 1, 0];
   private COST_CITY = [0, 0, 0, 2, 3];
 
+  // ===== 盗賊ロジック =====
+  private totalResources(pIndex: number): number {
+    const p = this.state.players[pIndex];
+    let sum = 0;
+    for (let i = 0; i < 5; i++) sum += (p.resources[i] ?? 0);
+    return sum;
+  }
 
+  private discardCountFor(pIndex: number): number {
+    const t = this.totalResources(pIndex);
+    return t >= 8 ? Math.floor(t / 2) : 0;
+  }
+
+  private startRobberFlow(moverIndex: number) {
+    this.state.robberMoverIndex = moverIndex;
+
+    // 誰か捨て札が必要か
+    let anyDiscard = false;
+    for (let i = 0; i < this.state.players.length; i++) {
+      if (this.discardCountFor(i) > 0) { anyDiscard = true; break; }
+    }
+
+    this.state.robberStep = anyDiscard ? 1 : 2; // 1:捨て札 -> 2:移動待ち
+    return anyDiscard;
+  }
+
+  private removeOneRandomResource(pIndex: number): boolean {
+    const p = this.state.players[pIndex];
+
+    // 手持ちがある資源indexを集める
+    const available: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      if ((p.resources[i] ?? 0) > 0) available.push(i);
+    }
+    if (available.length === 0) return false;
+
+    const ri = available[Math.floor(Math.random() * available.length)];
+    p.resources[ri] = (p.resources[ri] ?? 0) - 1;
+    return true;
+  }
+
+  private autoDiscardAllRequired() {
+    for (let i = 0; i < this.state.players.length; i++) {
+      let need = this.discardCountFor(i);
+      while (need > 0) {
+        if (!this.removeOneRandomResource(i)) break;
+        need--;
+      }
+    }
+  }
+
+  private getRobbableVictims(moverIndex: number, tileId: number): number[] {
+    const vIds = this.tileIdToVertexIds.get(tileId) ?? [];
+    const set = new Set<number>();
+
+    for (const vId of vIds) {
+      const s = this.state.settlements.get(String(vId));
+      if (!s) continue;
+      const owner = s.ownerIndex as any;
+      if (owner === moverIndex) continue;
+
+      // 資源が1枚以上ある相手だけ
+      if (this.totalResources(owner) > 0) set.add(owner);
+    }
+
+    return [...set];
+  }
+
+  private stealOneRandomResource(victimIndex: number): number | null {
+    const p = this.state.players[victimIndex];
+    const bag: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const c = p.resources[i] ?? 0;
+      for (let k = 0; k < c; k++) bag.push(i);
+    }
+    if (bag.length === 0) return null;
+
+    const pick = bag[Math.floor(Math.random() * bag.length)];
+    p.resources[pick] = (p.resources[pick] ?? 0) - 1;
+    return pick;
+  }
+
+  private finishRobberFlow() {
+    this.state.robberStep = 0;
+    this.state.robberMoverIndex = -1;
+
+    // ★重要：このターンはサイコロを振り終わった扱いにする
+    this.state.turnStep = 1;
+  }
+
+
+
+  // ===== チートコマンド =====
   private forceEnterMainPhase(startPlayerIndex = 0) {
     // 初期配置中の一時情報をクリア
     this.pendingInitialSettlementByPlayer.clear();
@@ -591,6 +683,7 @@ export class MyRoom extends Room<MyRoomState> {
         console.log("rollDice ignored: already rolled.");
         return;
       }
+      if (this.state.robberStep !== 0) return;
 
       // 1〜6の乱数を生成
       const d1 = Math.floor(Math.random() * 6) + 1;
@@ -601,6 +694,23 @@ export class MyRoom extends Room<MyRoomState> {
       this.state.dice2 = d2;
 
       const sum = d1 + d2;
+
+      if (sum === 7) {
+        const anyDiscard = this.startRobberFlow(playerIndex);
+
+        // ★まずは簡単に「捨て札は自動ランダム」でも動くようにする
+        // （手動捨て札UIは後から）
+        if (anyDiscard) {
+          this.autoDiscardAllRequired();
+          this.state.robberStep = 2; // 移動待ちへ
+        }
+
+        // mover に「盗賊を動かして」と通知（UI用）
+        client.send("robberMoveRequired", true);
+        console.log(`Player ${client.sessionId} rolled 7, starting robber flow.`);
+        return;
+      }
+
       this.distributeResourcesByDice(sum);
 
       this.state.turnStep = 1;
@@ -635,6 +745,68 @@ export class MyRoom extends Room<MyRoomState> {
 
       console.log(`Turn ended. Next player: ${this.state.currentPlayerIndex}`);
     });
+
+    this.onMessage("moveRobber", (client, data) => {
+      const mover = this.players.indexOf(client);
+      if (mover === -1) return;
+
+      if (this.state.phase !== 2) return;
+      if (this.state.robberStep !== 2) return; // 移動待ちのみ
+      if (mover !== this.state.robberMoverIndex) return;
+
+      const tileId = Number(data.tileId);
+      if (!Number.isInteger(tileId) || tileId < 0 || tileId >= this.state.tiles.length) return;
+
+      // 同じタイルには置けない（標準ルール）
+      if (tileId === this.state.robberTileId) {
+        client.send("buildError", { reason: "同じタイルには盗賊を移動できません" });
+        return;
+      }
+
+      this.state.robberTileId = tileId;
+
+      // 奪える相手がいるか
+      const victims = this.getRobbableVictims(mover, tileId);
+      if (victims.length === 0) {
+        // 奪えないなら盗賊処理終了（建設など継続OK）
+        this.finishRobberFlow();
+        return;
+      }
+
+      // 次は奪う待ち
+      this.state.robberStep = 3;
+
+      // mover に候補を送る（UIで選べる）
+      client.send("robberVictims", { victims });
+    });
+
+    this.onMessage("robPlayer", (client, data) => {
+      const mover = this.players.indexOf(client);
+      if (mover === -1) return;
+
+      if (this.state.phase !== 2) return;
+      if (this.state.robberStep !== 3) return; // 奪う待ち
+      if (mover !== this.state.robberMoverIndex) return;
+
+      const victim = Number(data.victimIndex);
+      if (!Number.isInteger(victim) || victim < 0 || victim >= this.state.players.length) return;
+
+      // いまの robberTile に隣接していて奪える相手かチェック
+      const candidates = this.getRobbableVictims(mover, this.state.robberTileId);
+      if (!candidates.includes(victim)) return;
+
+      // victim からランダムで1枚奪う
+      const stolenRes = this.stealOneRandomResource(victim);
+      if (stolenRes != null) {
+        this.addResourceToPlayer(mover, stolenRes, 1);
+      }
+
+      // 盗賊処理終了
+      this.finishRobberFlow();
+    });
+
+
+
     this.onMessage("cheatAddResource", (client, data) => {
       if (!this.ENABLE_CHEAT) return;
 
