@@ -5,6 +5,16 @@ import { MyRoomState, Tile, Vertex, Edge, Structure, PlayerState } from "./schem
 type VKey = string;           // "x_y" (quantized int)
 type EKey = string;           // "x1_y1|x2_y2" (sorted)
 
+const DevCard = {
+  Knight: 0,
+  RoadBuilding: 1,
+  YearOfPlenty: 2,
+  Monopoly: 3,
+  VictoryPoint: 4,
+} as const;
+type DevCardType = (typeof DevCard)[keyof typeof DevCard];
+
+
 export class MyRoom extends Room<MyRoomState> {
   maxClients = 4;
 
@@ -48,8 +58,12 @@ export class MyRoom extends Room<MyRoomState> {
     // ゲーム開始時にボード生成
     this.generateBoardAndGraph();
 
+    // 発展カードデッキの初期化
+    this.initDevDeck();
+
     // rollDice / endTurn / build は後ろに（建設ルールで使う）
     this.registerHandlers();
+
 
   }
 
@@ -441,6 +455,105 @@ export class MyRoom extends Room<MyRoomState> {
   }
 
 
+  // ===== 発展カードデッキ初期化 =====
+
+  private initDevDeck() {
+    const deck: number[] = [];
+    for (let i = 0; i < 14; i++) deck.push(DevCard.Knight);
+    for (let i = 0; i < 2; i++) deck.push(DevCard.RoadBuilding);
+    for (let i = 0; i < 2; i++) deck.push(DevCard.YearOfPlenty);
+    for (let i = 0; i < 2; i++) deck.push(DevCard.Monopoly);
+    for (let i = 0; i < 5; i++) deck.push(DevCard.VictoryPoint);
+
+    this.shuffle(deck);
+
+    this.state.devDeck.clear();
+    for (const c of deck) this.state.devDeck.push(c);
+  }
+
+
+  private playKnight(p: number, client: any) {
+    const ps = this.state.players[p];
+    ps.knightsPlayed++;
+
+    this.updateLargestArmy();
+
+    this.state.robberStep = 2;
+
+    client.send("robberMoveRequired", true);
+  }
+
+  private updateLargestArmy() {
+    let bestOwner = this.state.largestArmyOwner;
+    let bestSize = this.state.largestArmySize;
+
+    for (let i = 0; i < this.state.players.length; i++) {
+      const n = this.state.players[i].knightsPlayed;
+      if (n >= 3 && n > bestSize) {
+        bestSize = n;
+        bestOwner = i;
+      }
+    }
+
+    this.state.largestArmyOwner = bestOwner;
+    this.state.largestArmySize = bestSize;
+  }
+
+  private tryConsume(resources: any /* ArraySchema<number> */, cost: Record<number, number>) {
+    // 足りるかチェック
+    for (const kStr of Object.keys(cost)) {
+      const k = Number(kStr);
+      const need = cost[k];
+      if ((resources[k] ?? 0) < need) return false;
+    }
+    // 減らす
+    for (const kStr of Object.keys(cost)) {
+      const k = Number(kStr);
+      resources[k] = (resources[k] ?? 0) - cost[k];
+    }
+    return true;
+  }
+
+  private playYearOfPlenty(p: number, client: any, data: any) {
+    const a = Number(data?.a);
+    const b = Number(data?.b);
+    if (![a, b].every((x) => Number.isInteger(x) && x >= 0 && x <= 4)) {
+      client.send("buildError", { reason: "豊作の指定が不正です" });
+      return;
+    }
+
+    const res = this.state.players[p].resources;
+    res[a] = (res[a] ?? 0) + 1;
+    res[b] = (res[b] ?? 0) + 1;
+  }
+
+  private playMonopoly(p: number, client: any, data: any) {
+    const r = Number(data?.resourceIndex);
+    if (!Number.isInteger(r) || r < 0 || r > 4) {
+      client.send("buildError", { reason: "独占の指定が不正です" });
+      return;
+    }
+
+    let total = 0;
+    for (let i = 0; i < this.state.players.length; i++) {
+      if (i === p) continue;
+      const res = this.state.players[i].resources;
+      const have = res[r] ?? 0;
+      if (have > 0) {
+        total += have;
+        res[r] = 0;
+      }
+    }
+
+    const myRes = this.state.players[p].resources;
+    myRes[r] = (myRes[r] ?? 0) + total;
+  }
+
+  private playVictoryPoint(p: number) {
+    this.state.players[p].devVictoryPoints++;
+  }
+
+
 
   // ===== チートコマンド =====
   private forceEnterMainPhase(startPlayerIndex = 0) {
@@ -739,9 +852,14 @@ export class MyRoom extends Room<MyRoomState> {
       }
 
       // 次のプレイヤーへ
-      const n = this.state.playerCount;
-      this.state.currentPlayerIndex = (this.state.currentPlayerIndex + 1) % n;
+      const next = (this.state.currentPlayerIndex + 1) % this.state.playerCount;
+      this.state.currentPlayerIndex = next
       this.state.turnStep = 0; // 次のプレイヤーはサイコロ前
+
+      // 発展カード使用状況リセット
+      const ps = this.state.players[next];
+      ps.devPlayedThisTurn = 0;
+      ps.devBoughtThisTurn = 0;
 
       console.log(`Turn ended. Next player: ${this.state.currentPlayerIndex}`);
     });
@@ -803,6 +921,111 @@ export class MyRoom extends Room<MyRoomState> {
 
       // 盗賊処理終了
       this.finishRobberFlow();
+    });
+
+    this.onMessage("buyDevCard", (client) => {
+      const p = this.players.indexOf(client);
+      if (p === -1) return;
+
+      if (this.state.phase !== 2) return;
+      if (p !== this.state.currentPlayerIndex) return;
+      if (this.state.turnStep !== 1) return;
+
+      // 盗賊処理中は買えない（好みだが推奨）
+      if (this.state.robberStep && this.state.robberStep !== 0) {
+        client.send("buildError", { reason: "盗賊処理中は発展カードを買えません" });
+        return;
+      }
+
+      if (this.state.devDeck.length <= 0) {
+        client.send("buildError", { reason: "発展カードの山札がありません" });
+        return;
+      }
+
+      const ps = this.state.players[p];
+
+      // コスト: sheep(2), wheat(3), ore(4)
+      if (!this.tryConsume(ps.resources, { 2: 1, 3: 1, 4: 1 })) {
+        client.send("buildError", { reason: "資源が足りません（羊/麦/鉄）" });
+        return;
+      }
+
+      const card = this.state.devDeck.pop();
+      ps.devCards.push(card);
+
+      // 「買ったターンは使えない」判定用
+      ps.devBoughtThisTurn = 1;
+
+      // デバッグ用途（本番では消してもOK）
+      client.send("devCardBought", { cardType: card });
+    });
+
+
+    this.onMessage("playDevCard", (client, data) => {
+      const p = this.players.indexOf(client);
+      if (p === -1) return;
+
+      if (this.state.phase !== 2) return;
+      if (p !== this.state.currentPlayerIndex) return;
+      if (this.state.turnStep !== 1) return;
+
+      // 盗賊処理中は使えない（騎士を例外にするならここで調整）
+      if (this.state.robberStep && this.state.robberStep !== 0) {
+        client.send("buildError", { reason: "盗賊処理中は発展カードを使えません" });
+        return;
+      }
+
+      const ps = this.state.players[p];
+
+      if (ps.devPlayedThisTurn) {
+        client.send("buildError", { reason: "このターンは既に発展カードを使っています" });
+        return;
+      }
+
+      const cardType = Number(data?.cardType);
+      if (!Number.isInteger(cardType)) return;
+
+      const idx = ps.devCards.findIndex((x) => x === cardType);
+      if (idx < 0) {
+        client.send("buildError", { reason: "その発展カードを持っていません" });
+        return;
+      }
+
+      const isVP = cardType === DevCard.VictoryPoint;
+
+      // VP以外は「買ったターンは使えない」
+      if (!isVP && ps.devBoughtThisTurn) {
+        client.send("buildError", { reason: "このターン買った発展カードは使えません" });
+        return;
+      }
+
+      // 使うので手札から除去
+      ps.devCards.splice(idx, 1);
+
+      // VP以外は1ターン1枚制限（VPも制限するなら isVP でもセット）
+      if (!isVP) ps.devPlayedThisTurn = 1;
+
+      switch (cardType) {
+        case DevCard.Knight:
+          this.playKnight(p, client);
+          break;
+
+        case DevCard.YearOfPlenty:
+          this.playYearOfPlenty(p, client, data);
+          break;
+
+        case DevCard.Monopoly:
+          this.playMonopoly(p, client, data);
+          break;
+
+        case DevCard.VictoryPoint:
+          this.playVictoryPoint(p);
+          break;
+
+        default:
+          client.send("buildError", { reason: "未実装の発展カードです" });
+          break;
+      }
     });
 
 
