@@ -5,6 +5,7 @@ import { Structure } from "../schema/MyRoomState";
 import { Phase, StructureType } from "../schema/constants";
 import { COST_CITY, COST_SETTLEMENT } from "../rules/costs";
 import { fail, getPlayerIndex, assertTurnOrFail, assertInitialStepOrFail, assertFreeRoadModeOrFail, isInitialPhase } from "../utils/guards";
+import { recomputeLongestRoad } from "./longestRoad";
 
 type BuildMessage =
   | { structureType: "settlement"; id: number }
@@ -81,6 +82,7 @@ function buildSettlement(room: MyRoom, client: Client, p: number, vId: number) {
   s.ownerIndex = p;
   s.type = StructureType.Settlement;
   room.state.settlements.set(String(vId), s);
+  recomputeLongestRoad(room);
 
   if (initial) {
     room.pendingInitialSettlementByPlayer.set(p, vId);
@@ -117,6 +119,7 @@ function buildCity(room: MyRoom, client: Client, p: number, vId: number) {
   upgraded.ownerIndex = old.ownerIndex;
   upgraded.type = StructureType.City;
   room.state.settlements.set(key, upgraded);
+  recomputeLongestRoad(room);
 }
 
 // ===== Road =====
@@ -140,6 +143,7 @@ function buildRoad(room: MyRoom, client: Client, p: number, eId: number) {
   s.ownerIndex = p;
   s.type = StructureType.Road;
   room.state.roads.set(key, s);
+  recomputeLongestRoad(room);
 
   if (initial) advanceInitialPlacementAfterRoad(room, p);
   if (freeMode) advanceFreeRoadMode(room, client);
