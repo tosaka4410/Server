@@ -1,7 +1,7 @@
 // src/rooms/world/board.ts
-import type { MyRoomState, Tile, Vertex, Edge } from "../../schema/MyRoomState";
-import { Tile as TileSchema, Vertex as VertexSchema, Edge as EdgeSchema } from "../../schema/MyRoomState";
-import { ResourceType } from "../../schema/constants";
+import type { MyRoomState, Tile, Vertex, Edge } from "../schema/MyRoomState";
+import { Tile as TileSchema, Vertex as VertexSchema, Edge as EdgeSchema } from "../schema/MyRoomState";
+import { ResourceType } from "../schema/constants";
 import { shuffle } from "../utils/shuffle";
 import { BoardGraph } from "./graph";
 import { CORNER_OFFSETS, generateCatanCoords, createAxialToWorld, quantizeKey, makeEdgeKey } from "./coords";
