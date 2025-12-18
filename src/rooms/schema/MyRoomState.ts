@@ -78,8 +78,12 @@ export class MyRoomState extends Schema {
   @type("number") robberStep: number = 0;            // 0:なし 1:捨て札中 2:移動待ち 3:奪う待ち
   @type("number") robberMoverIndex: number = -1;     // 盗賊を動かすプレイヤー（基本は手番）
 
+  // 発展カード関連
   @type(["number"]) devDeck = new ArraySchema<number>(); // 山札（シャッフル済みのカードタイプ配列）
   @type("number") largestArmyOwner = -1;
   @type("number") largestArmySize = 0;
+
+  @type("number") freeRoadOwner = -1;   // 無料道路モードのプレイヤー
+  @type("number") freeRoadsLeft = 0;    // 残り何本無料で置けるか（0/1/2）
 
 }

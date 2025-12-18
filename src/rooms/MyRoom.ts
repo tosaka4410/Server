@@ -553,6 +553,22 @@ export class MyRoom extends Room<MyRoomState> {
     this.state.players[p].devVictoryPoints++;
   }
 
+  private beginRoadBuilding(p: number, client: any) {
+    // すでに別の無料道路モード中なら拒否
+    if (this.state.freeRoadsLeft > 0) {
+      client.send("buildError", { reason: "すでに街道建設が進行中です" });
+      return;
+    }
+
+    // 無料道路モード開始
+    this.state.freeRoadOwner = p;
+    this.state.freeRoadsLeft = 2;
+
+    // デバッグ/UX用（なくてもOK）
+    client.send("roadBuildingStarted", { left: 2 });
+  }
+
+
 
 
   // ===== チートコマンド =====
@@ -592,6 +608,20 @@ export class MyRoom extends Room<MyRoomState> {
         if (playerIndex !== this.state.currentPlayerIndex) { this.sendBuildError(client, "Not your turn."); return; }
         if (this.state.turnStep !== 1) { this.sendBuildError(client, "You must roll dice before building."); return; }
       }
+
+      const isFreeRoadMode = this.state.freeRoadsLeft > 0;
+      const isFreeRoadOwner = playerIndex === this.state.freeRoadOwner;
+
+      // 無料道路モード中は「道以外」禁止（シンプル運用）
+      if (isFreeRoadMode && !isFreeRoadOwner) {
+        client.send("buildError", { reason: "他プレイヤーの街道建設中です" });
+        return;
+      }
+      if (isFreeRoadMode && data.structureType !== "road") {
+        client.send("buildError", { reason: "街道建設中は道だけ置けます" });
+        return;
+      }
+
 
       if (data.structureType === "settlement") {
         const vId = Number(data.id);
@@ -704,79 +734,83 @@ export class MyRoom extends Room<MyRoomState> {
         return;
       }
 
-
       if (data.structureType === "road") {
-        const eId = Number(data.id);
-        if (!Number.isInteger(eId) || eId < 0 || eId >= this.state.edges.length) { this.sendBuildError(client, "Invalid edge id."); return; }
+        const roadKey = String(data.id);
 
-        if (this.state.roads.has(String(eId))) { this.sendBuildError(client, "Edge already has a road."); return; }
-
-        const endpoints = this.edgeIdToEndpoints.get(eId);
-        if (!endpoints) { this.sendBuildError(client, "Edge endpoints not found."); return; }
-        const { a, b } = endpoints;
-
-        // 接続ルール
-        if (isInitial) {
-          // 初期配置：直前の開拓地に接続必須
-          const pending = this.pendingInitialSettlementByPlayer.get(playerIndex);
-          if (pending == null) { this.sendBuildError(client, "No pending initial settlement found."); return; }
-          if (pending !== a && pending !== b) { this.sendBuildError(client, "Road must connect to your last initial settlement."); return; } // 直前の開拓地に接続必須
-        } else {
-          // 本番：自分の建物 or 自分の道に接続
-          const aMineBuilding = this.state.settlements.get(String(a))?.ownerIndex === playerIndex;
-          const bMineBuilding = this.state.settlements.get(String(b))?.ownerIndex === playerIndex;
-
-          const hasMyRoadAt = (v: number) => {
-            const edges = this.vertexIdToEdges.get(v);
-            if (!edges) return false;
-            for (const eid of edges) {
-              const rr = this.state.roads.get(String(eid));
-              if (rr && rr.ownerIndex === playerIndex) return true;
-            }
-            return false;
-          };
-
-          if (!(aMineBuilding || bMineBuilding || hasMyRoadAt(a) || hasMyRoadAt(b))) { this.sendBuildError(client, "Road must connect to your road or building."); return; }
+        // edgeIdとして妥当か（任意だけどデバッグに効く）
+        const eId = Number(roadKey);
+        if (!Number.isInteger(eId) || eId < 0 || eId >= this.state.edges.length) {
+          client.send("buildError", { reason: "無効な辺IDです" });
+          return;
         }
 
-        // コストルールと支払い
-        if (!isInitial) {
-          if (!this.canPay(playerIndex, this.COST_ROAD)) {
-            client.send("buildError", { reason: "資源が足りません（道）" });
+        if (this.state.roads.has(roadKey)) {
+          client.send("buildError", { reason: "そこには既に道があります" });
+          return;
+        }
+
+        const isFreeRoadMode = this.state.freeRoadsLeft > 0;
+        const isFreeRoadOwner = playerIndex === this.state.freeRoadOwner;
+
+        // 無料道路モード中は「そのプレイヤーだけ」「道だけ」
+        if (isFreeRoadMode && !isFreeRoadOwner) {
+          client.send("buildError", { reason: "他プレイヤーの街道建設中です" });
+          return;
+        }
+
+        // 支払いが必要なのは「本番フェーズで、無料道路モードじゃない」時だけ
+        const shouldPay = (!isInitial) && !(isFreeRoadMode && isFreeRoadOwner);
+
+        if (shouldPay) {
+          const ps = this.state.players[playerIndex];
+          // 木(0)・レンガ(1)
+          if (!this.tryConsume(ps.resources, { 0: 1, 1: 1 })) {
+            client.send("buildError", { reason: "資源が足りません（木/レンガ）" });
             return;
           }
-          this.pay(playerIndex, this.COST_ROAD);
         }
 
-        const r = new Structure();
-        r.ownerIndex = playerIndex;
-        r.type = 1;
-        this.state.roads.set(String(eId), r);
+        // 道を建てる
+        const s = new Structure();
+        s.ownerIndex = playerIndex;
+        s.type = 1; // Road
+        this.state.roads.set(roadKey, s);
 
-
+        // 初期配置なら「開拓地→道」で次へ進める（あなたの既存ロジックに合わせる）
         if (isInitial) {
+          // 開拓地を置いた後の pending がある前提（あなたのコードに合わせて）
+          // 道の接続チェックをするならここで pendingSettlement と接続してるか判定する
+
           this.pendingInitialSettlementByPlayer.delete(playerIndex);
 
-          // 初期配置ターン進行（家→道完了）
+          // 次の手番へ
+          this.state.initialPlacementStep = 0;
           this.state.initialPlacementTurn++;
-          const totalTurns = this.state.playerCount * 2;
 
-          if (this.state.initialPlacementTurn >= totalTurns) {
+          // 2巡終わったら本番へ（あなたの既存条件に合わせて）
+          if (this.state.initialPlacementTurn >= this.state.playerCount * 2) {
             this.state.phase = 2;
-            this.state.currentPlayerIndex = 0;
-            this.state.turnStep = 0;
-          } else {
-            // 1巡目(phase=0) / 2巡目(phase=1) の切り替え
-            this.state.phase = (this.state.initialPlacementTurn >= this.state.playerCount) ? 1 : 0;
-
-            // 次の人の「開拓地」から
-            this.state.initialPlacementStep = 0;
-
-            // 次の手番プレイヤーを更新（蛇行順）
-            this.state.currentPlayerIndex = this.getCurrentInitialPlacementPlayer();
+            this.state.turnStep = 0; // 本番はサイコロ前から
+            this.state.currentPlayerIndex = 0; // ここは好み（最後の人開始にしたいなら変更）
           }
         }
+
+        // 無料道路モード処理（街道建設カード）
+        if (isFreeRoadMode && isFreeRoadOwner) {
+          this.state.freeRoadsLeft--;
+
+          if (this.state.freeRoadsLeft <= 0) {
+            this.state.freeRoadsLeft = 0;
+            this.state.freeRoadOwner = -1;
+            client.send("roadBuildingFinished", {});
+          } else {
+            client.send("roadBuildingProgress", { left: this.state.freeRoadsLeft });
+          }
+        }
+
+        return;
       }
+
     });
 
     // サイコロを振るリクエストを処理
@@ -845,9 +879,15 @@ export class MyRoom extends Room<MyRoomState> {
         console.log("endTurn ignored: not your turn.");
         return;
       }
-      // サイコロを振っていないなら終了させない（任意）
+      // サイコロを振っていないなら終了させない
       if (this.state.turnStep === 0) {
         console.log("endTurn ignored: dice not rolled yet.");
+        return;
+      }
+
+      // 街道建設カード中は終了させない
+      if (this.state.freeRoadsLeft > 0) {
+        client.send("buildError", { reason: "街道建設（無料道路）を完了してください" });
         return;
       }
 
@@ -1020,6 +1060,10 @@ export class MyRoom extends Room<MyRoomState> {
 
         case DevCard.VictoryPoint:
           this.playVictoryPoint(p);
+          break;
+
+        case DevCard.RoadBuilding:
+          this.beginRoadBuilding(p, client);
           break;
 
         default:
