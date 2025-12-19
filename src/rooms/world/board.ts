@@ -119,6 +119,9 @@ export function buildBoardAndGraph(state: MyRoomState, graph: BoardGraph, config
         graph.vertexIdToNeighbors.get(a)!.add(b);
         graph.vertexIdToNeighbors.get(b)!.add(a);
       }
+
+      // その辺が何枚のタイルに接したかを数える
+      graph.edgeIdToTileCount.set(eId, (graph.edgeIdToTileCount.get(eId) ?? 0) + 1);
     }
   }
 }

@@ -18,6 +18,9 @@ export class BoardGraph {
   vertexIdToTileIds = new Map<number, number[]>();
   tileIdToVertexIds = new Map<number, number[]>();
 
+  // edgeが何枚のタイルに接しているか（境界辺は 1）
+  edgeIdToTileCount = new Map<number, number>();
+
   clear() {
     this.vertexKeyToId.clear();
     this.vertexIdToKey.clear();
@@ -27,6 +30,7 @@ export class BoardGraph {
     this.edgeIdToEndpoints.clear();
     this.vertexIdToTileIds.clear();
     this.tileIdToVertexIds.clear();
+    this.edgeIdToTileCount.clear();
   }
 
   linkVertexTile(tileId: number, vId: number) {

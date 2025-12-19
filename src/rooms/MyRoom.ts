@@ -5,11 +5,13 @@ import { Phase } from "./schema/constants";
 
 import { BoardGraph } from "./world/graph";
 import { buildBoardAndGraph } from "./world/board";
+import { buildPorts } from "./world/ports";
 
 import { registerBuildHandlers } from "./handlers/build";
 import { registerTurnHandlers } from "./handlers/turn";
 import { registerRobberHandlers } from "./handlers/robber";
 import { registerDevCardHandlers } from "./handlers/devcards";
+import { registerTradeHandlers } from "./handlers/trade";
 
 export class MyRoom extends Room<MyRoomState> {
   maxClients = 4;
@@ -38,11 +40,14 @@ export class MyRoom extends Room<MyRoomState> {
       desertIndex: this.desertIndex,
     });
 
+    buildPorts(this.state, this.graph);
+
     // ハンドラ登録（機能ごと）
     registerBuildHandlers(this);
     registerTurnHandlers(this);
     registerRobberHandlers(this);
     registerDevCardHandlers(this);
+    registerTradeHandlers(this);
 
     // 開始時の盗賊初期位置（必要なら）
     // this.state.robberTileId = this.desertIndex;

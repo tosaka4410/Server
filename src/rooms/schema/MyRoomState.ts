@@ -34,6 +34,27 @@ export class Structure extends Schema {
   @type("number") type: number = 0; // 1:Road 2:Settlement 3:City
 }
 
+export class Port extends Schema {
+  @type("number") id: number = 0;
+
+  // 3:1 汎用 = 0, 2:1 資源指定 = 1
+  @type("number") kind: number = 0;
+
+  // kind=1 のときだけ使う（資源タイプ: 1..5、Desert=0は使わない想定）
+  @type("number") resourceType: number = 0;
+
+  // 2 or 3（表示/UI用にも使える）
+  @type("number") ratio: number = 3;
+
+  // 港に接する2頂点（このどちらかに開拓地/都市があれば港利用OK）
+  @type("number") vertexA: number = 0;
+  @type("number") vertexB: number = 0;
+
+  // 任意：Unity表示のために港の中心座標（edge中心でOK）
+  @type("number") x: number = 0;
+  @type("number") y: number = 0;
+}
+
 export class PlayerState extends Schema {
   // resource[0..4] = wood, brick, sheep, wheat, ore
   @type(["number"]) resources = new ArraySchema<number>(0, 0, 0, 0, 0);
@@ -49,6 +70,8 @@ export class MyRoomState extends Schema {
   @type([Tile]) tiles = new ArraySchema<Tile>();
   @type([Vertex]) vertices = new ArraySchema<Vertex>();
   @type([Edge]) edges = new ArraySchema<Edge>();
+  
+  @type([Port]) ports = new ArraySchema<Port>();
 
   // 建設結果は「頂点ID」「辺ID」をキーにする
   @type({ map: Structure }) settlements = new MapSchema<Structure>(); // key = vertexId string
