@@ -29,13 +29,35 @@ export function buildPorts(state: MyRoomState, graph: BoardGraph) {
     .sort((a, b) => a.angle - b.angle)
     .map(x => x.eId);
 
-  // 3) 9個選ぶ（外周辺数は標準盤面で十分あるので等間隔に取る）
+  // 3') 角度を -π〜π に正規化
+  const angled = sorted.map(eId => {
+    const e = state.edges[eId];
+    let a = Math.atan2(e.y, e.x);
+    if (a < 0) a += Math.PI * 2;
+    return { eId, angle: a };
+  });
+
+  // 3'') 理想角に最も近い辺を選ぶ
   const portCount = 9;
-  const step = Math.floor(sorted.length / portCount);
   const picked: number[] = [];
+
   for (let i = 0; i < portCount; i++) {
-    picked.push(sorted[(i * step) % sorted.length]);
+    const target = (Math.PI * 2 * i) / portCount;
+
+    let best = angled[0];
+    let bestDiff = Math.abs(angled[0].angle - target);
+
+    for (const a of angled) {
+      const diff = Math.abs(a.angle - target);
+      if (diff < bestDiff) {
+        best = a;
+        bestDiff = diff;
+      }
+    }
+
+    picked.push(best.eId);
   }
+
 
   // 4) 港種類（標準：3:1×4、2:1×5（木/レンガ/羊/麦/鉄））
   const specs: PortSpec[] = [
