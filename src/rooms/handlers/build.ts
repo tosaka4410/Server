@@ -6,6 +6,7 @@ import { Phase, StructureType } from "../schema/constants";
 import { COST_CITY, COST_SETTLEMENT } from "../rules/costs";
 import { fail, getPlayerIndex, assertTurnOrFail, assertInitialStepOrFail, assertFreeRoadModeOrFail, isInitialPhase } from "../utils/guards";
 import { recomputeLongestRoad } from "./longestRoad";
+import { MAX_CITIES, MAX_ROADS, MAX_SETTLEMENTS } from "../rules/pieceLimits";
 
 type BuildMessage =
   | { structureType: "settlement"; id: number }
@@ -33,6 +34,31 @@ function handleBuild(room: MyRoom, client: Client, data: BuildMessage) {
       return buildRoad(room, client, p, Number(data.id));
   }
 }
+
+function countMyRoads(room: MyRoom, p: number): number {
+  let n = 0;
+  for (const s of room.state.roads.values()) {
+    if (s.ownerIndex === p) n++;
+  }
+  return n;
+}
+
+function countMySettlements(room: MyRoom, p: number): number {
+  let n = 0;
+  for (const s of room.state.settlements.values()) {
+    if (s.ownerIndex === p && s.type === StructureType.Settlement) n++;
+  }
+  return n;
+}
+
+function countMyCities(room: MyRoom, p: number): number {
+  let n = 0;
+  for (const s of room.state.settlements.values()) {
+    if (s.ownerIndex === p && s.type === StructureType.City) n++;
+  }
+  return n;
+}
+
 
 // ===== 共通：支払い =====
 function canPay(room: MyRoom, p: number, cost: readonly number[]) {
@@ -62,6 +88,9 @@ function hasMyRoadConnectedToVertex(room: MyRoom, p: number, vId: number): boole
 
 // ===== Settlement =====
 function buildSettlement(room: MyRoom, client: Client, p: number, vId: number) {
+  if (countMySettlements(room, p) >= MAX_SETTLEMENTS) {
+    return fail(client, "開拓地の在庫がありません（上限）");
+  }
   if (!Number.isInteger(vId) || vId < 0 || vId >= room.state.vertices.length) return fail(client, "Invalid vertex id.");
   if (room.state.settlements.has(String(vId))) return fail(client, "Vertex already has a settlement.");
 
@@ -108,6 +137,10 @@ function buildCity(room: MyRoom, client: Client, p: number, vId: number) {
   if (!Number.isInteger(vId) || vId < 0 || vId >= room.state.vertices.length) return fail(client, "無効な頂点IDです");
   if (isInitialPhase(room)) return fail(client, "初期配置中は都市にできません");
 
+  if (countMyCities(room, p) >= MAX_CITIES) {
+    return fail(client, "都市の在庫がありません（上限）");
+  }
+
   const r = canUpgradeToCity(room, p, vId);
   if (!r.ok) return fail(client, r.reason!);
 
@@ -124,6 +157,9 @@ function buildCity(room: MyRoom, client: Client, p: number, vId: number) {
 
 // ===== Road =====
 function buildRoad(room: MyRoom, client: Client, p: number, eId: number) {
+  if (countMyRoads(room, p) >= MAX_ROADS) {
+    return fail(client, "街道の在庫がありません（上限）");
+  }
   if (!Number.isInteger(eId) || eId < 0 || eId >= room.state.edges.length) return fail(client, "無効な辺IDです");
 
   const key = String(eId);
