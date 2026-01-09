@@ -12,6 +12,7 @@ import { registerTurnHandlers } from "./handlers/turn";
 import { registerRobberHandlers } from "./handlers/robber";
 import { registerDevCardHandlers } from "./handlers/devcards";
 import { registerTradeHandlers } from "./handlers/trade";
+import { registerPlayerTradeHandlers } from "./handlers/playerTrade";
 
 export class MyRoom extends Room<MyRoomState> {
   maxClients = 4;
@@ -27,6 +28,9 @@ export class MyRoom extends Room<MyRoomState> {
 
   // 初期配置の一時情報
   pendingInitialSettlementByPlayer = new Map<number, number>();
+    // ===== Player trade (pending offers) =====
+  pendingTradeOffers = new Map<number, any>();
+  nextTradeOfferId = 1;
 
   readonly ENABLE_CHEAT = true;
 
@@ -48,6 +52,8 @@ export class MyRoom extends Room<MyRoomState> {
     registerRobberHandlers(this);
     registerDevCardHandlers(this);
     registerTradeHandlers(this);
+    registerPlayerTradeHandlers(this);
+
 
     // 開始時の盗賊初期位置（必要なら）
     // this.state.robberTileId = this.desertIndex;
