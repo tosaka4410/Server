@@ -155,32 +155,88 @@ function buildCity(room: MyRoom, client: Client, p: number, vId: number) {
   recomputeLongestRoad(room);
 }
 
+// ===== helper functions =====
+function isMyBuildingAtVertex(room: MyRoom, p: number, vId: number): boolean {
+  const s = room.state.settlements.get(String(vId));
+  if (!s) return false;
+  return s.ownerIndex === p && (s.type === StructureType.Settlement || s.type === StructureType.City);
+}
+
+function isOpponentBuildingAtVertex(room: MyRoom, p: number, vId: number): boolean {
+  const s = room.state.settlements.get(String(vId));
+  if (!s) return false;
+  return s.ownerIndex !== p && (s.type === StructureType.Settlement || s.type === StructureType.City);
+}
+
+function hasMyRoadAtVertex(room: MyRoom, p: number, vId: number): boolean {
+  const edges = room.graph.vertexIdToEdges.get(vId);
+  if (!edges) return false;
+  for (const eId of edges) {
+    const r = room.state.roads.get(String(eId));
+    if (r && r.ownerIndex === p) return true;
+  }
+  return false;
+}
+
+/**
+ * 通常時（初期配置以外）の「道路接続」判定
+ * - 端点vが相手建物なら、その端点を使っての接続は不可（自分建物があるなら可）
+ * - 接続は「自分建物」または「自分の既存道路」
+ */
+function canConnectRoadFromVertex(room: MyRoom, p: number, vId: number): boolean {
+  if (isOpponentBuildingAtVertex(room, p, vId) && !isMyBuildingAtVertex(room, p, vId)) {
+    return false; // 相手建物でブロック
+  }
+  if (isMyBuildingAtVertex(room, p, vId)) return true;
+  if (hasMyRoadAtVertex(room, p, vId)) return true;
+  return false;
+}
+
+
+
 // ===== Road =====
 function buildRoad(room: MyRoom, client: Client, p: number, eId: number) {
-  if (countMyRoads(room, p) >= MAX_ROADS) {
-    return fail(client, "街道の在庫がありません（上限）");
-  }
   if (!Number.isInteger(eId) || eId < 0 || eId >= room.state.edges.length) return fail(client, "無効な辺IDです");
 
   const key = String(eId);
   if (room.state.roads.has(key)) return fail(client, "そこには既に道があります");
 
+  const e = room.state.edges[eId];
+  const a = e.a;
+  const b = e.b;
+
   const initial = isInitialPhase(room);
   const freeMode = room.state.freeRoadsLeft > 0 && p === room.state.freeRoadOwner;
 
-  // 支払い（本番＆無料道路でない）
+  // ===== 置ける場所チェック（カタン準拠） =====
+  if (initial) {
+    // 初期配置の道路は、直前に置いた自分の開拓地に隣接している必要がある
+    const pendingV = room.pendingInitialSettlementByPlayer.get(p);
+    if (pendingV == null) return fail(client, "初期配置: 先に開拓地を置いてください");
+    if (a !== pendingV && b !== pendingV) return fail(client, "初期配置: 道は置いた開拓地に隣接している必要があります");
+  } else {
+    // 通常時（本番/街道建設カード含む）は「自分のネットワークに接続」している必要
+    const okA = canConnectRoadFromVertex(room, p, a);
+    const okB = canConnectRoadFromVertex(room, p, b);
+    if (!okA && !okB) return fail(client, "道は自分の道/建物に接続している必要があります（相手建物でブロックされる場合もあります）");
+  }
+
+  // ===== 支払い（初期配置は無料、街道建設カード中も無料） =====
   if (!initial && !freeMode) {
     const ps = room.state.players[p];
     // wood(0) brick(1)
     if (!tryConsume(ps.resources as any, { 0: 1, 1: 1 })) return fail(client, "資源が足りません（木/レンガ）");
   }
 
+  // ===== 設置 =====
   const s = new Structure();
   s.ownerIndex = p;
   s.type = StructureType.Road;
   room.state.roads.set(key, s);
+
   recomputeLongestRoad(room);
 
+  // ===== フロー更新 =====
   if (initial) advanceInitialPlacementAfterRoad(room, p);
   if (freeMode) advanceFreeRoadMode(room, client);
 }
