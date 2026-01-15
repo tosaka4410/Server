@@ -7,6 +7,8 @@ import { COST_CITY, COST_SETTLEMENT } from "../rules/costs";
 import { fail, getPlayerIndex, assertTurnOrFail, assertInitialStepOrFail, assertFreeRoadModeOrFail, isInitialPhase } from "../utils/guards";
 import { recomputeLongestRoad } from "./longestRoad";
 import { MAX_CITIES, MAX_ROADS, MAX_SETTLEMENTS } from "../rules/pieceLimits";
+import { checkWinAndEndIfNeeded } from "./victory";
+
 
 type BuildMessage =
   | { structureType: "settlement"; id: number }
@@ -18,6 +20,8 @@ export function registerBuildHandlers(room: MyRoom) {
 }
 
 function handleBuild(room: MyRoom, client: Client, data: BuildMessage) {
+  if (room.state.gameOver) return fail(client, "ゲームは終了しています");
+
   const p = getPlayerIndex(room, client);
   if (p == null) return;
 
@@ -112,6 +116,7 @@ function buildSettlement(room: MyRoom, client: Client, p: number, vId: number) {
   s.type = StructureType.Settlement;
   room.state.settlements.set(String(vId), s);
   recomputeLongestRoad(room);
+  checkWinAndEndIfNeeded(room);
 
   if (initial) {
     room.pendingInitialSettlementByPlayer.set(p, vId);
@@ -153,6 +158,7 @@ function buildCity(room: MyRoom, client: Client, p: number, vId: number) {
   upgraded.type = StructureType.City;
   room.state.settlements.set(key, upgraded);
   recomputeLongestRoad(room);
+  checkWinAndEndIfNeeded(room);
 }
 
 // ===== helper functions =====
@@ -235,6 +241,7 @@ function buildRoad(room: MyRoom, client: Client, p: number, eId: number) {
   room.state.roads.set(key, s);
 
   recomputeLongestRoad(room);
+  checkWinAndEndIfNeeded(room);
 
   // ===== フロー更新 =====
   if (initial) advanceInitialPlacementAfterRoad(room, p);

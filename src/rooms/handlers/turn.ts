@@ -12,6 +12,8 @@ export function registerTurnHandlers(room: MyRoom) {
 }
 
 function onRollDice(room: MyRoom, client: Client) {
+  if (room.state.gameOver) return;
+
   const p = getPlayerIndex(room, client);
   if (p == null) return;
 
@@ -60,6 +62,8 @@ function onRollDice(room: MyRoom, client: Client) {
 }
 
 function onEndTurn(room: MyRoom, client: Client) {
+  if (room.state.gameOver) return;
+
   const p = getPlayerIndex(room, client);
   if (p == null) return;
 

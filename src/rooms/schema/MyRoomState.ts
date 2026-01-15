@@ -62,15 +62,18 @@ export class PlayerState extends Schema {
   @type("number") devBoughtThisTurn = 0;
   @type("number") devPlayedThisTurn = 0;
   @type("number") knightsPlayed = 0;
-  @type("number") devVictoryPoints = 0;
+  @type("number") devVictoryPoints = 0; // 勝利点カードの点数
   @type("number") longestRoadPoints = 0;
+  @type("number") largestArmyPoints = 0;  // 2 or 0
+  @type("number") victoryPoints = 0;      // 勝利点合計の表示/同期用
+
 }
 
 export class MyRoomState extends Schema {
   @type([Tile]) tiles = new ArraySchema<Tile>();
   @type([Vertex]) vertices = new ArraySchema<Vertex>();
   @type([Edge]) edges = new ArraySchema<Edge>();
-  
+
   @type([Port]) ports = new ArraySchema<Port>();
 
   // 建設結果は「頂点ID」「辺ID」をキーにする
@@ -101,7 +104,7 @@ export class MyRoomState extends Schema {
   @type("number") robberTileId: number = 9;          // 盗賊がいるタイル（初期は砂漠など）
   @type("number") robberStep: number = 0;            // 0:なし 1:捨て札中 2:移動待ち 3:奪う待ち
   @type("number") robberMoverIndex: number = -1;     // 盗賊を動かすプレイヤー（基本は手番）
-  
+
   // 最長交易路関連
   @type("number") longestRoadOwner = -1;
   @type("number") longestRoadLength = 0;
@@ -118,4 +121,8 @@ export class MyRoomState extends Schema {
   // 7で捨て札が必要な枚数（playerIndexごと）
   // robberStep=Discarding の間、各プレイヤーは robberDiscardRemaining[p] 枚捨てる必要がある
   @type(["number"]) robberDiscardRemaining = new ArraySchema<number>();
+
+  @type("number") gameOverWinner = -1;  // 勝者 playerIndex
+  @type("number") gameOver = 0;         // 0/1
+
 }

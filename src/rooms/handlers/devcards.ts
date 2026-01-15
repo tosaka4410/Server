@@ -3,8 +3,7 @@ import type { Client } from "@colyseus/core";
 import type { MyRoom } from "../MyRoom";
 import { DevCard, Phase } from "../schema/constants";
 import { fail, getPlayerIndex } from "../utils/guards";
-
-import { startRobberFlow } from "./robber_logic"; // 騎士で robberStep いじるならここを使うのもOK
+import { checkWinAndEndIfNeeded } from "./victory";
 
 export function registerDevCardHandlers(room: MyRoom) {
   initDevDeck(room);
@@ -44,6 +43,8 @@ function tryConsume(resources: any, cost: Record<number, number>) {
 }
 
 function onBuyDevCard(room: MyRoom, client: Client) {
+  if (room.state.gameOver) return;
+
   const p = getPlayerIndex(room, client);
   if (p == null) return;
 
@@ -65,6 +66,8 @@ function onBuyDevCard(room: MyRoom, client: Client) {
 }
 
 function onPlayDevCard(room: MyRoom, client: Client, data: any) {
+  if (room.state.gameOver) return;
+
   const p = getPlayerIndex(room, client);
   if (p == null) return;
 
@@ -93,6 +96,7 @@ function onPlayDevCard(room: MyRoom, client: Client, data: any) {
     case DevCard.Knight:
       ps.knightsPlayed++;
       updateLargestArmy(room);
+      checkWinAndEndIfNeeded(room);
       room.state.robberStep = 2; // MoveWaiting
       client.send("robberMoveRequired", true);
       break;
@@ -127,6 +131,7 @@ function onPlayDevCard(room: MyRoom, client: Client, data: any) {
 
     case DevCard.VictoryPoint:
       ps.devVictoryPoints++;
+      checkWinAndEndIfNeeded(room);
       break;
 
     case DevCard.RoadBuilding:
@@ -143,17 +148,75 @@ function onPlayDevCard(room: MyRoom, client: Client, data: any) {
 }
 
 function updateLargestArmy(room: MyRoom) {
-  let bestOwner = room.state.largestArmyOwner;
-  let bestSize = room.state.largestArmySize;
+  const prevOwner = room.state.largestArmyOwner;
+  const prevSize = room.state.largestArmySize;
 
+  // まず全員のポイントを0に（小規模なので毎回リセットでOK）
+  for (let i = 0; i < room.state.players.length; i++) {
+    room.state.players[i].largestArmyPoints = 0;
+  }
+
+  // 最高騎士数を集計
+  let bestSize = -1;
+  let bestPlayers: number[] = [];
   for (let i = 0; i < room.state.players.length; i++) {
     const n = room.state.players[i].knightsPlayed;
-    if (n >= 3 && n > bestSize) {
+    if (n < 3) continue; // 3未満は候補外
+
+    if (n > bestSize) {
       bestSize = n;
-      bestOwner = i;
+      bestPlayers = [i];
+    } else if (n === bestSize) {
+      bestPlayers.push(i);
     }
   }
 
-  room.state.largestArmyOwner = bestOwner;
+  // 候補がいない（誰も3未満）なら、保持者なし
+  if (bestPlayers.length === 0) {
+    room.state.largestArmyOwner = -1;
+    room.state.largestArmySize = 0;
+    return;
+  }
+
+  // 同点トップが複数いる場合：
+  // - 既に保持者がいて、その保持者が同点トップに含まれるなら維持
+  // - それ以外は「誰も獲得しない」
+  if (bestPlayers.length >= 2) {
+    if (prevOwner !== -1 && bestPlayers.includes(prevOwner) && prevSize === bestSize) {
+      // 維持
+      room.state.largestArmyOwner = prevOwner;
+      room.state.largestArmySize = bestSize;
+      room.state.players[prevOwner].largestArmyPoints = 2;
+    } else {
+      // 誰も獲得しない（保持者がいた場合も剥奪）
+      room.state.largestArmyOwner = -1;
+      room.state.largestArmySize = bestSize; // ここは0でもいいが、デバッグ用に残してOK
+    }
+    return;
+  }
+
+  // 単独トップ
+  const candidate = bestPlayers[0];
+
+  // ★カタン準拠：保持者がいる場合、"より多い" ときだけ奪える（同点では奪えない）
+  if (prevOwner !== -1) {
+    if (bestSize > prevSize) {
+      room.state.largestArmyOwner = candidate;
+      room.state.largestArmySize = bestSize;
+      room.state.players[candidate].largestArmyPoints = 2;
+    } else {
+      // bestSize == prevSize のはず（knightsは減らない）
+      room.state.largestArmyOwner = prevOwner;
+      room.state.largestArmySize = prevSize;
+      room.state.players[prevOwner].largestArmyPoints = 2;
+    }
+    return;
+  }
+
+  // 保持者なし → 単独トップなら付与
+  room.state.largestArmyOwner = candidate;
   room.state.largestArmySize = bestSize;
+  room.state.players[candidate].largestArmyPoints = 2;
 }
+
+
