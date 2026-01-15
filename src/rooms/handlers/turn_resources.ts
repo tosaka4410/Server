@@ -24,6 +24,10 @@ export function distributeResourcesByDice(room: MyRoom, sum: number) {
     const tile = room.state.tiles[i];
     if (tile.numberToken !== sum) continue;
 
+    // 盗賊がいるタイルは産出しない
+    if (tile.id === room.state.robberTileId) continue;
+
+
     const resIdx = resourceIndexFromTileResourceType(tile.resourceType);
     if (resIdx == null) continue;
 

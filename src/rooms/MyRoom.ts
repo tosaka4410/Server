@@ -28,7 +28,7 @@ export class MyRoom extends Room<MyRoomState> {
 
   // 初期配置の一時情報
   pendingInitialSettlementByPlayer = new Map<number, number>();
-    // ===== Player trade (pending offers) =====
+  // ===== Player trade (pending offers) =====
   pendingTradeOffers = new Map<number, any>();
   nextTradeOfferId = 1;
 
@@ -72,6 +72,11 @@ export class MyRoom extends Room<MyRoomState> {
     if (this.players.length === this.maxClients) {
       this.startInitialPlacement();
     }
+    // robberDiscardRemaining のサイズを players に合わせる
+    while (this.state.robberDiscardRemaining.length < this.state.players.length) {
+      this.state.robberDiscardRemaining.push(0);
+    }
+
   }
 
   onLeave(client: Client) {

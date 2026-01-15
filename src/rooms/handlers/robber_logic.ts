@@ -1,4 +1,3 @@
-// src/rooms/handlers/robber_logic.ts
 import type { MyRoom } from "../MyRoom";
 import { RobberStep, TurnStep } from "../schema/constants";
 
@@ -14,37 +13,32 @@ function discardCountFor(room: MyRoom, p: number): number {
   return t >= 8 ? Math.floor(t / 2) : 0;
 }
 
-function removeOneRandomResource(room: MyRoom, p: number): boolean {
-  const ps = room.state.players[p];
-  const available: number[] = [];
-  for (let i = 0; i < 5; i++) if ((ps.resources[i] ?? 0) > 0) available.push(i);
-  if (available.length === 0) return false;
-
-  const ri = available[Math.floor(Math.random() * available.length)];
-  ps.resources[ri] = (ps.resources[ri] ?? 0) - 1;
-  return true;
-}
-
-export function startRobberFlow(room: MyRoom, moverIndex: number): boolean {
+// ★ 7が出た時：捨て札が必要なら robberStep=Discarding にして remaining をセット
+export function startRobberFlowInteractive(room: MyRoom, moverIndex: number): boolean {
   room.state.robberMoverIndex = moverIndex;
+
+  // 配列サイズを合わせる
+  while (room.state.robberDiscardRemaining.length < room.state.players.length) {
+    room.state.robberDiscardRemaining.push(0);
+  }
 
   let anyDiscard = false;
   for (let i = 0; i < room.state.players.length; i++) {
-    if (discardCountFor(room, i) > 0) { anyDiscard = true; break; }
+    const need = discardCountFor(room, i);
+    room.state.robberDiscardRemaining[i] = need;
+    if (need > 0) anyDiscard = true;
   }
 
   room.state.robberStep = anyDiscard ? RobberStep.Discarding : RobberStep.MoveWaiting;
   return anyDiscard;
 }
 
-export function autoDiscardAllRequired(room: MyRoom) {
+// ★ 全員が捨て終わったか
+export function isDiscardPhaseComplete(room: MyRoom): boolean {
   for (let i = 0; i < room.state.players.length; i++) {
-    let need = discardCountFor(room, i);
-    while (need > 0) {
-      if (!removeOneRandomResource(room, i)) break;
-      need--;
-    }
+    if ((room.state.robberDiscardRemaining[i] ?? 0) > 0) return false;
   }
+  return true;
 }
 
 export function getRobbableVictims(room: MyRoom, moverIndex: number, tileId: number): number[] {

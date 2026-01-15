@@ -115,4 +115,7 @@ export class MyRoomState extends Schema {
   @type("number") freeRoadOwner = -1;   // 無料道路モードのプレイヤー
   @type("number") freeRoadsLeft = 0;    // 残り何本無料で置けるか（0/1/2）
 
+  // 7で捨て札が必要な枚数（playerIndexごと）
+  // robberStep=Discarding の間、各プレイヤーは robberDiscardRemaining[p] 枚捨てる必要がある
+  @type(["number"]) robberDiscardRemaining = new ArraySchema<number>();
 }
